@@ -5,6 +5,8 @@ import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.os.Handler
 import android.support.v7.app.AppCompatActivity
+import android.util.Log
+import android.util.SparseArray
 import android.view.MotionEvent
 import android.view.View
 import com.google.ar.core.HitResult
@@ -15,14 +17,16 @@ import com.google.ar.sceneform.rendering.*
 import com.google.ar.sceneform.ux.ArFragment
 import com.google.ar.sceneform.ux.TransformableNode
 import kotlinx.android.synthetic.main.activity_main.*
-import java.math.RoundingMode
-import java.text.DecimalFormat
 import java.util.concurrent.CompletableFuture
 
 
-class MainActivity : AppCompatActivity()
+data class Reading(var strength: Int, var node: TransformableNode?)
+
+class MainActivity: AppCompatActivity()
 {
 	private var materialColors: MutableList<Material> = mutableListOf()
+
+	private val heatMap = SparseArray<SparseArray<Reading>>()
 
 	private var arFragment: ArFragment? = null
 
@@ -35,7 +39,7 @@ class MainActivity : AppCompatActivity()
 	{
 		super.onCreate(savedInstanceState)
 
-		if (!checkIsSupportedDeviceOrFinish(this))
+		if(!checkIsSupportedDeviceOrFinish(this))
 		{
 			return
 		}
@@ -70,7 +74,52 @@ class MainActivity : AppCompatActivity()
 				}
 	}
 
-	private fun wifiManager() = getSystemService(Context.WIFI_SERVICE) as WifiManager ?: throw IllegalStateException("Could not get WifiManager")
+	private fun setReading(x: Float, z: Float, strength: Int): Boolean
+	{
+		val intX = (x * 10f).toInt()
+		val intZ = (z * 10f).toInt()
+
+		var col = heatMap[intZ]
+		if(col == null)
+		{
+			heatMap.put(intZ, SparseArray())
+			col = heatMap[intZ]
+		}
+
+		val reading = col[intX]
+		val existingRenderable: TransformableNode? = reading?.node
+
+		return if(reading == null || reading.strength != strength)
+		{
+			existingRenderable?.parent?.removeChild(existingRenderable)
+
+			Log.d("adam", "x: $x z: $z s: $strength" )
+			val renderable = createReadingRenderable(x, z, strength)
+
+			col.put(intX, Reading(strength, renderable))
+			true
+		}
+		else
+		{
+			false
+		}
+	}
+
+	/*
+		private fun getReading(x: Int, y: Int): Int
+		{
+			val col = heatMap[y]
+			return if(col != null)
+			{
+				col[x] ?: 0
+			}
+			else
+			{
+				0
+			}
+		}
+	*/
+	private fun wifiManager() = getSystemService(Context.WIFI_SERVICE) as WifiManager
 
 	override fun onStart()
 	{
@@ -86,27 +135,46 @@ class MainActivity : AppCompatActivity()
 		handler.removeCallbacks(viewUpdateTask)
 	}
 
-	private fun createSphere( level: Int ): ModelRenderable?
+	private fun createBlock(level: Int): ModelRenderable?
+	{
+		//val scaleFactor = WifiManager.calculateSignalLevel(level, 100)
+		val normalizedLevel = (level * -1) - 50
+		val scaleFactor = 1f - (normalizedLevel.toFloat() / 50f)
+
+		Log.d("adam", "scaleFactor: $scaleFactor level: $level")
+
+		val height = 0.5f * scaleFactor
+
+		return ShapeFactory.makeCube(Vector3(0.25f, height, 0.25f), Vector3(), materialColors[0])
+	}
+
+	private fun createSphere(level: Int): ModelRenderable?
 	{
 		return when(level)
 		{
-			0 -> ShapeFactory.makeSphere(0.01f, Vector3(), materialColors[0])
-			1 -> ShapeFactory.makeSphere(0.02f, Vector3(), materialColors[1])
-			2 -> ShapeFactory.makeSphere(0.03f, Vector3(), materialColors[2])
-			3 -> ShapeFactory.makeSphere(0.055f, Vector3(), materialColors[3])
+			0    -> ShapeFactory.makeSphere(0.01f, Vector3(), materialColors[0])
+			1    -> ShapeFactory.makeSphere(0.02f, Vector3(), materialColors[1])
+			2    -> ShapeFactory.makeSphere(0.03f, Vector3(), materialColors[2])
+			3    -> ShapeFactory.makeSphere(0.055f, Vector3(), materialColors[3])
 			else -> ShapeFactory.makeSphere(0.075f, Vector3(), materialColors[4])
 		}
 	}
+
+	private var anchorNode: AnchorNode? = null
 
 	private fun onTapArPlaneListener(hitResult: HitResult, plane: Plane, motionEvent: MotionEvent)
 	{
 		val ar = arFragment ?: return
 
 		// Create the Anchor
-		val anchor = hitResult.createAnchor()
-		val anchorNode = AnchorNode(anchor)
-		anchorNode.setParent(ar.arSceneView.scene)
+		if(anchorNode == null)
+		{
+			val anchor = hitResult.createAnchor()
+			anchorNode = AnchorNode(anchor)
+			anchorNode?.setParent(ar.arSceneView.scene)
+		}
 
+		/*
 		// Create the transformable sphere and add it to the anchor
 		val sphere = TransformableNode(ar.transformationSystem)
 		sphere.setParent(anchorNode)
@@ -121,14 +189,53 @@ class MainActivity : AppCompatActivity()
 		val posZ = df.format(cameraPos.z).toFloat()
 
 		sphere.localPosition = sphere.worldToLocalPoint(Vector3(posX, posY, posZ))
-		sphere.renderable = createSphere( getSignalStrength() )
+		sphere.renderable = createSphere(getSignalStrength())
+		*/
+	}
+
+	private fun createReadingRenderable(x: Float, z: Float, strength: Int): TransformableNode?
+	{
+		val ar = arFragment ?: return null
+		anchorNode ?: return null
+
+		// Create the transformable sphere and add it to the anchor
+		val sphere = TransformableNode(ar.transformationSystem)
+		sphere.setParent(anchorNode)
+
+		val posX = x
+		val posY = -0.25f
+		val posZ = z
+
+		sphere.localPosition = sphere.worldToLocalPoint(Vector3(posX, posY, posZ))
+		sphere.renderable = createBlock(strength)
+
+		return sphere
+	}
+
+	private fun getGridPosition(): Vector3
+	{
+		val ar = arFragment ?: return Vector3()
+
+		val cameraPos = ar.arSceneView.scene.camera.worldPosition
+
+		var x = roundToHalf(cameraPos.x.toDouble())
+		//x = if(x.toInt() % 2 == 0) x else x - 1
+
+		var z = roundToHalf(cameraPos.z.toDouble())
+		//z = if(z.toInt() % 2 == 0) z else z - 1
+
+		return Vector3(x.toFloat(), 10f, z.toFloat())
+	}
+
+	fun roundToHalf(d: Double): Double
+	{
+		return Math.round(d * 2) / 2.0
 	}
 
 	private fun getSignalStrength(): Int
 	{
-		val numberOfLevels = 5
 		val wifiInfo = wifiManager().connectionInfo
-		return WifiManager.calculateSignalLevel(wifiInfo.rssi, numberOfLevels)
+		return wifiInfo.rssi
 	}
 
 	private fun updateAndSchedule()
@@ -139,9 +246,15 @@ class MainActivity : AppCompatActivity()
 
 	private fun updateViews()
 	{
-		if (wifiManager().connectionInfo != null)
+		if(wifiManager().connectionInfo != null)
 		{
 			val strength = getSignalStrength()
+
+			val gridPosition = getGridPosition()
+			if(setReading(gridPosition.x, gridPosition.z, strength))
+			{
+				createReadingRenderable(gridPosition.x, gridPosition.z, strength)
+			}
 
 			val ar = arFragment ?: return
 
@@ -149,13 +262,27 @@ class MainActivity : AppCompatActivity()
 
 			//val pos = ar.arSceneView.scene.camera.worldPosition
 			//wifi_ssid_strength.text = "( ${pos.x}, ${pos.y}, ${pos.z} )"
-
-			wifi_found_view.visibility = View.VISIBLE
 		}
 		else
 		{
 			wifi_ssid_strength.text = ""
+		}
+
+		if(wifiManager().connectionInfo != null && anchorNode != null)
+		{
+			wifi_found_view.visibility = View.VISIBLE
+		}
+		else
+		{
 			wifi_found_view.visibility = View.GONE
 		}
 	}
+
+	companion object
+	{
+		const val TAG = "main"
+	}
+
+	private val wifi: WifiManager
+		get() = getSystemService(Context.WIFI_SERVICE) as WifiManager
 }
