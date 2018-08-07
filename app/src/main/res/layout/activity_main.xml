@@ -38,5 +38,24 @@
 			android:visibility="invisible"
 			tools:visibility="visible"/>
 
+		<TextView
+			android:layout_width="0dp"
+			android:layout_height="wrap_content"
+			android:gravity="center"
+			android:id="@+id/instructions_view"
+			app:layout_constraintStart_toStartOf="parent"
+			android:layout_marginStart="8dp"
+			app:layout_constraintEnd_toEndOf="parent"
+			android:layout_marginEnd="8dp"
+			app:layout_constraintTop_toTopOf="parent"
+			android:layout_marginTop="8dp"
+			android:textAppearance="@style/TextAppearance.AppCompat.Large"
+			android:textStyle="bold|italic"
+			android:textAllCaps="false"
+			android:shadowColor="#ff000000"
+			android:shadowDy="2"
+			android:shadowRadius="4"
+			/>
+
 	</android.support.constraint.ConstraintLayout>
 </FrameLayout>

@@ -2,4 +2,8 @@
 	<string name="app_name">AR Wifi</string>
 
 	<string name="signal_strength">signal strength %1$d</string>
+
+	<string name="instructions_step_1">Move your phone around until you see a tracked plane</string>
+	<string name="instructions_step_2">Tap the screen to begin mapping your WiFi strength</string>
+
 </resources>

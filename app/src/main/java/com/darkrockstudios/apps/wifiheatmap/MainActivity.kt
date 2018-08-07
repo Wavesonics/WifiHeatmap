@@ -14,6 +14,7 @@ import com.google.ar.core.HitResult
 import com.google.ar.core.Plane
 import com.google.ar.core.TrackingState
 import com.google.ar.sceneform.AnchorNode
+import com.google.ar.sceneform.FrameTime
 import com.google.ar.sceneform.Node
 import com.google.ar.sceneform.math.Vector3
 import com.google.ar.sceneform.rendering.*
@@ -52,7 +53,32 @@ class MainActivity : AppCompatActivity()
 		setContentView(R.layout.activity_main)
 
 		arFragment = supportFragmentManager.findFragmentById(R.id.ux_fragment) as ArFragment
+		arFragment?.arSceneView?.scene?.addOnUpdateListener(this::onSceneUpdate)
 		arFragment?.setOnTapArPlaneListener(this::onTapArPlaneListener)
+	}
+
+	private fun onSceneUpdate(frameTime: FrameTime)
+	{
+		val ar = arFragment ?: return
+
+		if(ar.arSceneView.arFrame.camera.trackingState === TrackingState.TRACKING)
+		{
+			if(anchorNode == null)
+			{
+				instructions_view.setText(R.string.instructions_step_2)
+
+				instructions_view.visibility = View.VISIBLE
+			}
+			else
+			{
+				instructions_view.visibility = View.GONE
+			}
+		}
+		else
+		{
+			instructions_view.setText(R.string.instructions_step_1)
+			instructions_view.visibility = View.VISIBLE
+		}
 	}
 
 	private fun loadData()
@@ -65,8 +91,6 @@ class MainActivity : AppCompatActivity()
 		for (ii in 0..max)
 		{
 			val colorInt = ColorUtils.blendARGB(start, end, (ii.toFloat() / (max - 1).toFloat()))
-
-			Log.d("adam", colorInt.toString(16))
 
 			val color = Color()
 			color.set(colorInt)
@@ -146,17 +170,18 @@ class MainActivity : AppCompatActivity()
 
 	private fun createBlock(level: Int): ModelRenderable?
 	{
+		val signalStrength = WifiManager.calculateSignalLevel(level, MAX_SIGNAL_STRENGTH)
+		val scaleFactor = signalStrength.toFloat() / MAX_SIGNAL_STRENGTH.toFloat()
 		//val scaleFactor = WifiManager.calculateSignalLevel(level, 100)
-		val normalizedLevel = (level * -1) - 50
-		val scaleFactor = 1f - (normalizedLevel.toFloat() / 50f)
+		//val normalizedLevel = (level * -1) - 50
+		//val scaleFactor = 1f - (normalizedLevel.toFloat() / 46f)
 
-		//Log.d("adam", "scaleFactor: $s level: $level")
+		Log.d("adam", "scaleFactor: $scaleFactor level: $level")
 
 		val height = 1f * scaleFactor
-
 		val size = 0.5f
 
-		val material = getColor(scaleFactor)
+		val material = getBarColor(scaleFactor)
 
 		return ShapeFactory.makeCube(Vector3(0.25f, height, 0.25f),
 				Vector3(0f, size, 0f),
@@ -171,7 +196,7 @@ class MainActivity : AppCompatActivity()
 			value - 1.0f
 	}
 
-	private fun getColor(ratio: Float): Material
+	private fun getBarColor(ratio: Float): Material
 	{
 		val colorIndex = ((materialColors.size - 1) * ratio).toInt()
 		Log.d("adam", "colorIndex: $colorIndex ratio: $ratio")
@@ -241,6 +266,8 @@ class MainActivity : AppCompatActivity()
 	}
 
 	fun roundToHalf(d: Double): Double = Math.round(d * 2) / 2.0
+
+	private val MAX_SIGNAL_STRENGTH = 300
 
 	private fun getSignalStrength(): Int
 	{
