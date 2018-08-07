@@ -1,5 +1,5 @@
 <resources>
-	<string name="app_name">WifiHeatmap</string>
+	<string name="app_name">AR Wifi</string>
 
 	<string name="signal_strength">signal strength %1$d</string>
 </resources>
