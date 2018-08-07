@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.os.Handler
+import android.support.v4.graphics.ColorUtils
 import android.support.v7.app.AppCompatActivity
 import android.util.Log
 import android.util.SparseArray
@@ -11,7 +12,9 @@ import android.view.MotionEvent
 import android.view.View
 import com.google.ar.core.HitResult
 import com.google.ar.core.Plane
+import com.google.ar.core.TrackingState
 import com.google.ar.sceneform.AnchorNode
+import com.google.ar.sceneform.Node
 import com.google.ar.sceneform.math.Vector3
 import com.google.ar.sceneform.rendering.*
 import com.google.ar.sceneform.ux.ArFragment
@@ -22,7 +25,7 @@ import java.util.concurrent.CompletableFuture
 
 data class Reading(var strength: Int, var node: TransformableNode?)
 
-class MainActivity: AppCompatActivity()
+class MainActivity : AppCompatActivity()
 {
 	private var materialColors: MutableList<Material> = mutableListOf()
 
@@ -39,7 +42,7 @@ class MainActivity: AppCompatActivity()
 	{
 		super.onCreate(savedInstanceState)
 
-		if(!checkIsSupportedDeviceOrFinish(this))
+		if (!checkIsSupportedDeviceOrFinish(this))
 		{
 			return
 		}
@@ -54,23 +57,30 @@ class MainActivity: AppCompatActivity()
 
 	private fun loadData()
 	{
-		val level_0_Completable = MaterialFactory.makeOpaqueWithColor(this, Color(1.0f, 0.0f, 0.0f))
-		val level_1_Completable = MaterialFactory.makeOpaqueWithColor(this, Color(1.0f, 0.1f, 0.1f))
-		val level_2_Completable = MaterialFactory.makeOpaqueWithColor(this, Color(1.0f, 0.2f, 0.15f))
-		val level_3_Completable = MaterialFactory.makeOpaqueWithColor(this, Color(0.75f, 1.0f, 0.25f))
-		val level_4_Completable = MaterialFactory.makeOpaqueWithColor(this, Color(0.0f, 1.0f, 0.25f))
+		val start = 0xFFFF0000.toInt()
+		val end = 0xFF00FF00.toInt()
 
-		CompletableFuture.allOf(level_0_Completable,
-								level_1_Completable,
-								level_2_Completable,
-								level_3_Completable,
-								level_4_Completable)
-				.handle { notUsed, throwable ->
-					materialColors.add(level_0_Completable.get())
-					materialColors.add(level_1_Completable.get())
-					materialColors.add(level_2_Completable.get())
-					materialColors.add(level_3_Completable.get())
-					materialColors.add(level_4_Completable.get())
+		val colors = mutableListOf<CompletableFuture<Material>>()
+		val max = 20
+		for (ii in 0..max)
+		{
+			val colorInt = ColorUtils.blendARGB(start, end, (ii.toFloat() / (max - 1).toFloat()))
+
+			Log.d("adam", colorInt.toString(16))
+
+			val color = Color()
+			color.set(colorInt)
+
+			val materialFuture = MaterialFactory.makeOpaqueWithColor(this, color)
+			colors.add(materialFuture)
+		}
+
+		CompletableFuture.allOf(*colors.toTypedArray())
+				.handle { _, _ ->
+
+					colors.forEach {
+						materialColors.add(it.get())
+					}
 				}
 	}
 
@@ -80,7 +90,7 @@ class MainActivity: AppCompatActivity()
 		val intZ = (z * 10f).toInt()
 
 		var col = heatMap[intZ]
-		if(col == null)
+		if (col == null)
 		{
 			heatMap.put(intZ, SparseArray())
 			col = heatMap[intZ]
@@ -89,11 +99,10 @@ class MainActivity: AppCompatActivity()
 		val reading = col[intX]
 		val existingRenderable: TransformableNode? = reading?.node
 
-		return if(reading == null || reading.strength != strength)
+		return if (reading == null || reading.strength != strength)
 		{
-			existingRenderable?.parent?.removeChild(existingRenderable)
+			existingRenderable?.setParent(null)
 
-			Log.d("adam", "x: $x z: $z s: $strength" )
 			val renderable = createReadingRenderable(x, z, strength)
 
 			col.put(intX, Reading(strength, renderable))
@@ -141,75 +150,79 @@ class MainActivity: AppCompatActivity()
 		val normalizedLevel = (level * -1) - 50
 		val scaleFactor = 1f - (normalizedLevel.toFloat() / 50f)
 
-		Log.d("adam", "scaleFactor: $scaleFactor level: $level")
+		//Log.d("adam", "scaleFactor: $s level: $level")
 
-		val height = 0.5f * scaleFactor
+		val height = 1f * scaleFactor
 
-		return ShapeFactory.makeCube(Vector3(0.25f, height, 0.25f), Vector3(), materialColors[0])
+		val size = 0.5f
+
+		val material = getColor(scaleFactor)
+
+		return ShapeFactory.makeCube(Vector3(0.25f, height, 0.25f),
+				Vector3(0f, size, 0f),
+				material)
 	}
 
-	private fun createSphere(level: Int): ModelRenderable?
+	fun logscale(value: Float): Float
 	{
-		return when(level)
-		{
-			0    -> ShapeFactory.makeSphere(0.01f, Vector3(), materialColors[0])
-			1    -> ShapeFactory.makeSphere(0.02f, Vector3(), materialColors[1])
-			2    -> ShapeFactory.makeSphere(0.03f, Vector3(), materialColors[2])
-			3    -> ShapeFactory.makeSphere(0.055f, Vector3(), materialColors[3])
-			else -> ShapeFactory.makeSphere(0.075f, Vector3(), materialColors[4])
-		}
+		return if (value > 1.0f)
+			Math.log(value.toDouble()).toFloat()
+		else
+			value - 1.0f
+	}
+
+	private fun getColor(ratio: Float): Material
+	{
+		val colorIndex = ((materialColors.size - 1) * ratio).toInt()
+		Log.d("adam", "colorIndex: $colorIndex ratio: $ratio")
+		return materialColors[colorIndex]
 	}
 
 	private var anchorNode: AnchorNode? = null
+	private var rootNode: Node? = null
 
 	private fun onTapArPlaneListener(hitResult: HitResult, plane: Plane, motionEvent: MotionEvent)
 	{
 		val ar = arFragment ?: return
 
-		// Create the Anchor
-		if(anchorNode == null)
+		if (ar.arSceneView.arFrame.camera.trackingState === TrackingState.TRACKING)
 		{
-			val anchor = hitResult.createAnchor()
-			anchorNode = AnchorNode(anchor)
-			anchorNode?.setParent(ar.arSceneView.scene)
+			val trackable = hitResult.trackable
+			if (trackable is Plane && trackable.isPoseInPolygon(hitResult.hitPose))
+			{
+				// Create the Anchor
+				if (anchorNode == null)
+				{
+					val anchor = hitResult.createAnchor()
+					anchorNode = AnchorNode(anchor)
+					anchorNode?.setParent(ar.arSceneView.scene)
+
+					rootNode = Node()
+					rootNode?.setParent(anchorNode)
+				}
+			}
 		}
-
-		/*
-		// Create the transformable sphere and add it to the anchor
-		val sphere = TransformableNode(ar.transformationSystem)
-		sphere.setParent(anchorNode)
-
-		val cameraPos = ar.arSceneView.scene.camera.worldPosition
-
-		val df = DecimalFormat("#.#")
-		df.roundingMode = RoundingMode.FLOOR
-
-		val posX = df.format(cameraPos.x).toFloat()
-		val posY = df.format(cameraPos.y).toFloat()
-		val posZ = df.format(cameraPos.z).toFloat()
-
-		sphere.localPosition = sphere.worldToLocalPoint(Vector3(posX, posY, posZ))
-		sphere.renderable = createSphere(getSignalStrength())
-		*/
 	}
 
 	private fun createReadingRenderable(x: Float, z: Float, strength: Int): TransformableNode?
 	{
 		val ar = arFragment ?: return null
-		anchorNode ?: return null
+		rootNode ?: return null
 
 		// Create the transformable sphere and add it to the anchor
-		val sphere = TransformableNode(ar.transformationSystem)
-		sphere.setParent(anchorNode)
+		//val base = Node()
+		val node = TransformableNode(ar.transformationSystem)
+		node.setParent(rootNode)
 
 		val posX = x
-		val posY = -0.25f
+		val posY = 0f
 		val posZ = z
 
-		sphere.localPosition = sphere.worldToLocalPoint(Vector3(posX, posY, posZ))
-		sphere.renderable = createBlock(strength)
+		//sphere.localPosition = sphere.worldToLocalPoint(Vector3(posX, posY, posZ))
+		node.localPosition = Vector3(posX, posY, posZ)
+		node.renderable = createBlock(strength)
 
-		return sphere
+		return node
 	}
 
 	private fun getGridPosition(): Vector3
@@ -227,10 +240,7 @@ class MainActivity: AppCompatActivity()
 		return Vector3(x.toFloat(), 10f, z.toFloat())
 	}
 
-	fun roundToHalf(d: Double): Double
-	{
-		return Math.round(d * 2) / 2.0
-	}
+	fun roundToHalf(d: Double): Double = Math.round(d * 2) / 2.0
 
 	private fun getSignalStrength(): Int
 	{
@@ -246,15 +256,12 @@ class MainActivity: AppCompatActivity()
 
 	private fun updateViews()
 	{
-		if(wifiManager().connectionInfo != null)
+		if (wifiManager().connectionInfo != null)
 		{
 			val strength = getSignalStrength()
 
 			val gridPosition = getGridPosition()
-			if(setReading(gridPosition.x, gridPosition.z, strength))
-			{
-				createReadingRenderable(gridPosition.x, gridPosition.z, strength)
-			}
+			setReading(gridPosition.x, gridPosition.z, strength)
 
 			val ar = arFragment ?: return
 
@@ -268,7 +275,7 @@ class MainActivity: AppCompatActivity()
 			wifi_ssid_strength.text = ""
 		}
 
-		if(wifiManager().connectionInfo != null && anchorNode != null)
+		if (wifiManager().connectionInfo != null && rootNode != null)
 		{
 			wifi_found_view.visibility = View.VISIBLE
 		}
